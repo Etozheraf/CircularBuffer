@@ -1,0 +1,7 @@
+#My
+cmake-build-debug/
+build/
+.idea/
+.vscode/
+.clang-format
+.editorconfig
