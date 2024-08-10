@@ -2,6 +2,18 @@
 
 #include "normal_iterator.h"
 
+class FullBufferException : std::exception {
+    const char* what() const noexcept override {
+        return "Buffer is full";
+    }
+};
+
+class EmptyBufferException : std::exception {
+    const char* what() const noexcept override {
+        return "Buffer is empty";
+    }
+};
+
 template<typename T, typename Alloc = std::allocator<T>>
 class CCircularBuffer {
 
@@ -20,79 +32,97 @@ public:
 
     // Container
 
-    constexpr CCircularBuffer() noexcept : allocator_(), capacity_(0), start_in_memory_(nullptr), head_(0),
-        size_(0) {}
+    constexpr CCircularBuffer() noexcept: allocator_(), capacity_(0), start_in_memory_(nullptr), head_(0),
+                                          size_(0) {}
 
-    explicit constexpr CCircularBuffer(size_type capacity)
-        : allocator_(),
-        start_in_memory_(Alloc_traits::allocate(allocator_, capacity)),
-        head_(0), capacity_(capacity), size_(0) {}
+    explicit constexpr CCircularBuffer(size_t capacity)
+            : allocator_(),
+              capacity_(capacity),
+              start_in_memory_(Alloc_traits::allocate(allocator_, capacity_)),
+              head_(0), size_(0) {}
+
 
     explicit constexpr CCircularBuffer(const Alloc& allocator) noexcept
-        : start_in_memory_(nullptr), head_(0), capacity_(0), size_(0),
-        allocator_(allocator) {}
+            : start_in_memory_(nullptr), head_(0), capacity_(0), size_(0),
+              allocator_(allocator) {}
 
-    explicit constexpr CCircularBuffer(size_type capacity, const Alloc& allocator)
-        : start_in_memory_(Alloc_traits::allocate(allocator, capacity)), head_(0),
-        capacity_(capacity), size_(0), allocator_(allocator) {}
+    explicit constexpr CCircularBuffer(size_t capacity, const Alloc& allocator)
+            : start_in_memory_(Alloc_traits::allocate(allocator_, capacity_)), head_(0),
+              capacity_(capacity), size_(0), allocator_(allocator) {}
 
     constexpr CCircularBuffer(const CCircularBuffer& other)
-        : allocator_(),
-        start_in_memory_(Alloc_traits::allocate(allocator_, other.capacity_)),
-        head_(other.head_), size_(other.size_), capacity_(other.capacity_) {
+            : allocator_(),
+              start_in_memory_(Alloc_traits::allocate(allocator_, capacity_)),
+              head_(other.head_), size_(other.size_), capacity_(other.capacity_) {
 
-        for (size_type i = head_; i < head_ + size_; i++) {
+        for (size_t i = head_; i < head_ + size_; i++) {
             Alloc_traits::construct(allocator_, start_in_memory_ + i % capacity_,
-                other.start_in_memory_[i % capacity_]);
+                                    other.start_in_memory_[i % capacity_]);
         }
     };
 
     constexpr CCircularBuffer(CCircularBuffer&& other) noexcept
-        : start_in_memory_(0), head_(0), size_(0), capacity_(0) {
+            : start_in_memory_(0), head_(0), size_(0), capacity_(0), allocator_() {
         std::swap(start_in_memory_, other.start_in_memory_);
         std::swap(head_, other.head_);
         std::swap(size_, other.size_);
         std::swap(capacity_, other.capacity_);
+        std::swap(allocator_, other.allocator_);
     }
 
-    CCircularBuffer(std::initializer_list<value_type> l)
-        : CCircularBuffer(l.begin(), l.end()) {}
+    CCircularBuffer(std::initializer_list<T> l)
+            : capacity_(l.size()),
+              start_in_memory_(Alloc_traits::allocate(allocator_, capacity_)), head_(0),
+              size_(l.size()), allocator_() {
+        size_t j = head_;
+        for (auto i = l.begin(); i != l.end(); i++, j++) {
+            Alloc_traits::construct(allocator_, start_in_memory_ + j % capacity_, *i);
+        }
+    }
 
-    constexpr CCircularBuffer(std::initializer_list<value_type> l, const Alloc& allocator)
-        : capacity_(2 * l.size()),
-        start_in_memory_(Alloc_traits::allocate(allocator, l.size())), head_(0),
-        size_(l.size()), allocator_(allocator) {
-
-        for (auto i = l.begin(), j = head_; i != l.end(); i++, j++) {
+    constexpr CCircularBuffer(std::initializer_list<T> l, const Alloc& allocator)
+            : capacity_(l.size()),
+              start_in_memory_(Alloc_traits::allocate(allocator_, capacity_)), head_(0),
+              size_(l.size()), allocator_(allocator) {
+        size_t j = head_;
+        for (auto i = l.begin(); i != l.end(); i++, j++) {
             Alloc_traits::construct(allocator, start_in_memory_ + j % capacity_, *i);
         }
     }
 
-    constexpr CCircularBuffer(size_type n, value_type t) : CCircularBuffer(2 * n) {
+    constexpr CCircularBuffer(size_t n, T t) : CCircularBuffer(n) {
         size_ = n;
-        for (size_type i = head_; i < head_ + size_; i++) {
+        for (size_t i = head_; i < head_ + size_; i++) {
             Alloc_traits::construct(allocator_, start_in_memory_ + i, t);
         }
     }
 
     template<typename InputIterator,
-        typename = std::_RequireInputIter<InputIterator>>
-        CCircularBuffer(InputIterator begin, InputIterator end)
-        : CCircularBuffer(2 * (end - begin)) {
-        size_ = end - begin;
-        for (auto i = 0, j = begin; i < size_; ++i, ++j) {
+            typename = std::_RequireInputIter<InputIterator>>
+    CCircularBuffer(InputIterator begin, InputIterator end) {
+        size_ = 0;
+        head_ = 0;
+        for (auto i = begin; i != end; ++i) {
+            ++size_;
+        }
+        capacity_ = size_;
+
+        start_in_memory_ = Alloc_traits::allocate(allocator_, capacity_);
+        auto j = begin;
+        for (auto i = 0; i < size_; ++i, ++j) {
             Alloc_traits::construct(allocator_, start_in_memory_ + i, *j);
         }
     }
 
     ~CCircularBuffer() {
-        if (start_in_memory_ != nullptr) {
-            for (size_t i = head_; i < head_ + size_; i++) {
-                Alloc_traits::destroy(allocator_, start_in_memory_ + i % capacity_);
-            }
-
-            Alloc_traits::deallocate(allocator_, start_in_memory_, capacity_);
+        if (start_in_memory_ == nullptr) {
+            return;
         }
+        for (size_t i = head_; i < head_ + size_; i++) {
+            Alloc_traits::destroy(allocator_, start_in_memory_ + i % capacity_);
+        }
+
+        Alloc_traits::deallocate(allocator_, start_in_memory_, capacity_);
     }
 
     constexpr CCircularBuffer& operator=(const CCircularBuffer& other) {
@@ -111,9 +141,9 @@ public:
         allocator_ = other.allocator_;
         start_in_memory_ = Alloc_traits::allocate(allocator_, capacity_);
 
-        for (size_type i = head_; i < head_ + size_; i++) {
+        for (size_t i = head_; i < head_ + size_; i++) {
             Alloc_traits::construct(allocator_, start_in_memory_ + i % capacity_,
-                other.start_in_memory_[i % capacity_]);
+                                    other.start_in_memory_[i % capacity_]);
         }
 
         return *this;
@@ -128,24 +158,24 @@ public:
         return *this;
     }
 
-    constexpr CCircularBuffer& operator=(std::initializer_list<value_type> l) {
+    constexpr CCircularBuffer& operator=(std::initializer_list<T> l) {
         *this = CCircularBuffer(l);
         return *this;
     }
 
     template<typename InputIterator,
-        typename = std::_RequireInputIter<InputIterator>>
-        void assign(InputIterator b, InputIterator e) {
+            typename = std::_RequireInputIter<InputIterator>>
+    void assign(InputIterator b, InputIterator e) {
         CCircularBuffer c(b, e);
         *this = c;
     }
 
-    void assign(std::initializer_list<value_type> il) {
+    void assign(std::initializer_list<T> il) {
         CCircularBuffer c(il);
         *this = c;
     }
 
-    void assign(size_t n, const value_type& t) {
+    void assign(size_t n, const T& t) {
         CCircularBuffer c(n, t);
         *this = c;
     }
@@ -159,11 +189,11 @@ public:
     }
 
     constexpr iterator end() noexcept {
-        return iterator(capacity_, start_in_memory_, head_, size_, capacity_);
+        return iterator(head_ + size_, start_in_memory_, head_, size_, capacity_);
     }
 
     constexpr const_iterator end() const noexcept {
-        return const_iterator(capacity_, start_in_memory_, head_, size_, capacity_);
+        return const_iterator(head_ + size_, start_in_memory_, head_, size_, capacity_);
     }
 
     constexpr const_iterator cbegin() const noexcept {
@@ -177,7 +207,7 @@ public:
     friend constexpr inline bool operator==(const CCircularBuffer& a, const CCircularBuffer& b) {
         if (&a == &b) return true;
         return (a.size_ == b.size_ &&
-            std::equal(a.begin(), a.end(), b.begin()));
+                std::equal(a.begin(), a.end(), b.begin()));
     }
 
     constexpr inline bool operator!=(const CCircularBuffer& other) { return !(*this == other); }
@@ -191,11 +221,11 @@ public:
 
     friend void swap(CCircularBuffer& a, CCircularBuffer& b) noexcept { a.swap(b); }
 
-    [[nodiscard]] constexpr size_type size() const noexcept { return size_; }
+    [[nodiscard]] constexpr size_t size() const noexcept { return size_; }
 
-    [[nodiscard]] constexpr size_type capacity() const noexcept { return capacity_; }
+    [[nodiscard]] constexpr size_t capacity() const noexcept { return capacity_; }
 
-    [[nodiscard]] constexpr size_type max_size() const noexcept {
+    [[nodiscard]] constexpr size_t max_size() const noexcept {
         return std::allocator_traits<Alloc>::max_size(allocator_);
     }
 
@@ -208,22 +238,24 @@ public:
         return insert(cp, std::forward<Args>(args)...);
     }
 
-    virtual iterator insert(const_iterator cp, const value_type& t) {
+    virtual iterator insert(const_iterator cp, const T& t) {
+        if (size_ == capacity_) {
+            throw FullBufferException();
+        }
+
         if (cp == cend()) {
             ++size_;
             Alloc_traits::construct(allocator_, &*(end() - 1), t);
             return (end() - 1);
         }
-        
         ++size_;
-
         int n = cp - cbegin();
         iterator p = begin() + n;
         iterator i = end() - 1;
         Alloc_traits::construct(allocator_, &(*i), *(i - 1));
         --i;
         while (i != p) {
-            pointer ptr = &(*i);
+            T* ptr = &(*i);
             Alloc_traits::destroy(allocator_, ptr);
             Alloc_traits::construct(allocator_, ptr, *(i - 1));
             --i;
@@ -232,161 +264,177 @@ public:
         return i;
     }
 
-    virtual iterator insert(const_iterator cp, value_type&& t) {
-        if (cp != cend()) {
-            ++size_;
-
-            int n = cp - cbegin();
-            iterator p = begin() + n;
-            iterator i = end() - 1;
-            Alloc_traits::construct(allocator_, &(*i), *(i - 1));
-            --i;
-            while (i != p) {
-                pointer ptr = &(*i);
-                Alloc_traits::destroy(allocator_, ptr);
-                Alloc_traits::construct(allocator_, ptr, *(i - 1));
-                --i;
-            }
-            Alloc_traits::construct(allocator_, &(*i), t);
-            return i;
+    virtual iterator insert(const_iterator cp, T&& t) {
+        if (size_ == capacity_) {
+            throw FullBufferException();
         }
+
+        if (cp == cend()) {
+            ++size_;
+            Alloc_traits::construct(allocator_, &*(end() - 1), t);
+            return (end() - 1);
+        }
+
         ++size_;
-        Alloc_traits::construct(allocator_, &*(end() - 1), t);
-        return (end() - 1);
+        int n = cp - cbegin();
+        iterator p = begin() + n;
+        iterator i = end() - 1;
+        Alloc_traits::construct(allocator_, &(*i), *(i - 1));
+        --i;
+        while (i != p) {
+            T* ptr = &(*i);
+            Alloc_traits::destroy(allocator_, ptr);
+            Alloc_traits::construct(allocator_, ptr, *(i - 1));
+            --i;
+        }
+        Alloc_traits::construct(allocator_, &(*i), t);
+        return i;
     }
 
-    constexpr iterator insert(const_iterator cp, size_type n, value_type t) {
+    constexpr iterator insert(const_iterator cp, size_t n, T t) {
         return insert(cp, CCircularBuffer(n, t));
     }
 
     template<typename InputIterator,
-        typename = std::_RequireInputIter<InputIterator>>
-        iterator insert(const_iterator cp, InputIterator b, InputIterator e) {
+            typename = std::_RequireInputIter<InputIterator>>
+    iterator insert(const_iterator cp, InputIterator b, InputIterator e) {
         return insert(cp, CCircularBuffer(b, e));
     }
 
-    iterator insert(const_iterator cp, std::initializer_list<value_type> il) {
+    iterator insert(const_iterator cp, std::initializer_list<T> il) {
         return insert(cp, CCircularBuffer(il.begin(), il.end()));
     }
 
     virtual iterator insert(const_iterator cp,
-        const CCircularBuffer<value_type>& a) {
+                            const CCircularBuffer<T>& a) {
+        if (size_ + a.size_ > capacity_) {
+            throw FullBufferException();
+        }
+
         int n = a.size_;
-        if (cp != cend()) {
-            int distance = cp - cbegin();
-
+        if (cp == cend()) {
             size_ += n;
-            if (size_ > capacity_) {
+            if (size_ > capacity_)
                 size_ %= capacity_;
+            auto t = (end() - n);
+            for (auto i = end() - 1, k = a.end() - 1; i != (end() - n); --i, --k) {
+                Alloc_traits::construct(allocator_, &(*i), *k);
             }
+            Alloc_traits::construct(allocator_, &*(end() - n), *a.begin());
 
-            iterator p = begin() + distance;
-            iterator i = end() - 1;
-            while (i != p) {
-                pointer ptr = &(*i);
-                if (i <= end() - n) {
-                    Alloc_traits::destroy(allocator_, ptr);
-                }
-
-                Alloc_traits::construct(allocator_, ptr, *(i - n));
-                --i;
-            }
-
-            for (auto j = i, k = a.cbegin(); j < i + n; ++j, ++k) {
-                Alloc_traits::construct(allocator_, &(*j), *k);
-            }
-            return i;
+            return (end() - n);
         }
+        int distance = cp - cbegin();
+
         size_ += n;
-        if (size_ > capacity_)
+        if (size_ > capacity_) {
             size_ %= capacity_;
-        auto t = (end() - n);
-        for (auto i = end() - 1, k = a.end() - 1; i != (end() - n); --i, --k) {
-            Alloc_traits::construct(allocator_, &(*i), *k);
         }
-        Alloc_traits::construct(allocator_, &*(end() - n), *a.begin());
 
-        return (end() - n);
+        iterator p = begin() + distance;
+        iterator i = end() - 1;
+        while (i != p) {
+            T* ptr = &(*i);
+            if (i <= end() - n) {
+                Alloc_traits::destroy(allocator_, ptr);
+            }
+
+            Alloc_traits::construct(allocator_, ptr, *(i - n));
+            --i;
+        }
+
+        for (auto j = i, k = a.cbegin(); j < i + n; ++j, ++k) {
+            Alloc_traits::construct(allocator_, &(*j), *k);
+        }
+        return i;
     }
 
-    virtual iterator insert(const_iterator cp, CCircularBuffer<value_type>&& a) {
+    virtual iterator insert(const_iterator cp, CCircularBuffer<T>&& a) {
+        if (size_ + a.size_ > capacity_) {
+            throw FullBufferException();
+        }
+
         int n = a.size_;
-        if (cp != cend()) {
-            int distance = cp - cbegin();
-
+        if (cp == cend()) {
             size_ += n;
-            if (size_ > capacity_) {
+            if (size_ > capacity_)
                 size_ %= capacity_;
+            auto t = (end() - n);
+            for (auto i = end() - 1, k = a.end() - 1; i != (end() - n); --i, --k) {
+                Alloc_traits::construct(allocator_, &(*i), *k);
             }
+            Alloc_traits::construct(allocator_, &*(end() - n), *a.begin());
 
-            iterator p = begin() + distance;
-            iterator i = end() - 1;
-            while (i != p) {
-                pointer ptr = &(*i);
-                if (i <= end() - n) {
-                    Alloc_traits::destroy(allocator_, ptr);
-                }
-
-                Alloc_traits::construct(allocator_, ptr, *(i - n));
-                --i;
-            }
-
-            for (auto j = i, k = a.begin(); j < i + n; ++j, ++k) {
-                Alloc_traits::construct(allocator_, &(*j), *k);
-            }
-            return i;
+            return (end() - n);
         }
+        int distance = cp - cbegin();
+
         size_ += n;
-        if (size_ > capacity_)
+        if (size_ > capacity_) {
             size_ %= capacity_;
-        auto t = (end() - n);
-        for (auto i = end() - 1, k = a.end() - 1; i != (end() - n); --i, --k) {
-            Alloc_traits::construct(allocator_, &(*i), *k);
         }
-        Alloc_traits::construct(allocator_, &*(end() - n), *a.begin());
 
-        return (end() - n);
+        iterator p = begin() + distance;
+        iterator i = end() - 1;
+        while (i != p) {
+            T* ptr = &(*i);
+            if (i <= end() - n) {
+                Alloc_traits::destroy(allocator_, ptr);
+            }
+
+            Alloc_traits::construct(allocator_, ptr, *(i - n));
+            --i;
+        }
+
+        for (auto j = i, k = a.begin(); j < i + n; ++j, ++k) {
+            Alloc_traits::construct(allocator_, &(*j), *k);
+        }
+        return i;
     }
 
     constexpr iterator erase(const_iterator cp) {
+
         iterator p = begin() + (cp - cbegin());
-        if (cp != cend() && size_ > 0) {
-            pointer ptr;
-            iterator i = p;
-
-            while (i != end() - 1) {
-                ptr = &*i;
-
-                Alloc_traits::destroy(allocator_, ptr);
-                Alloc_traits::construct(allocator_, ptr, *(i + 1));
-                ++i;
-            }
-            Alloc_traits::destroy(allocator_, &*i);
-
-            --size_;
+        if (cp == cend() || size_ == 0) {
+            return p;
         }
+        T* ptr;
+        iterator i = p;
+
+        while (i != end() - 1) {
+            ptr = &*i;
+
+            Alloc_traits::destroy(allocator_, ptr);
+            Alloc_traits::construct(allocator_, ptr, *(i + 1));
+            ++i;
+        }
+        Alloc_traits::destroy(allocator_, &*i);
+
+        --size_;
         return p;
     }
 
     constexpr iterator erase(const_iterator cq1, const_iterator cq2) {
+
         iterator q1 = begin() + (cq1 - cbegin());
         iterator q2 = begin() + (cq2 - cbegin());
-        if (q1 != end() && q1 < q2 && size_ > q2 - q1) {
-            pointer ptr;
-            iterator i = q1;
-            size_t n = q2 - q1;
-
-            while (i != end() - n) {
-                ptr = &*i;
-
-                Alloc_traits::destroy(allocator_, ptr);
-                Alloc_traits::construct(allocator_, ptr, *(i + n));
-                ++i;
-            }
-            Alloc_traits::destroy(allocator_, &*i);
-
-            size_ -= n;
+        if (q1 == end() || q1 >= q2 || size_ <= q2 - q1) {
+            return q1;
         }
+        T* ptr;
+        iterator i = q1;
+        size_t n = q2 - q1;
+
+        while (i != end() - n) {
+            ptr = &*i;
+
+            Alloc_traits::destroy(allocator_, ptr);
+            Alloc_traits::construct(allocator_, ptr, *(i + n));
+            ++i;
+        }
+        Alloc_traits::destroy(allocator_, &*i);
+
+        size_ -= n;
         return q1;
     }
 
@@ -397,13 +445,13 @@ public:
         size_ = 0;
     }
 
-    constexpr reference front() noexcept { return start_in_memory_[head_]; }
+    constexpr T& front() noexcept { return start_in_memory_[head_]; }
 
-    constexpr const_reference front() const noexcept { return start_in_memory_[head_]; }
+    constexpr const T& front() const noexcept { return start_in_memory_[head_]; }
 
-    constexpr reference back() noexcept { return start_in_memory_[(head_ + size_ - 1) % capacity_]; }
+    constexpr T& back() noexcept { return start_in_memory_[(head_ + size_ - 1) % capacity_]; }
 
-    constexpr const_reference back() const noexcept {
+    constexpr const T& back() const noexcept {
         return start_in_memory_[(head_ + size_) % capacity_];
     }
 
@@ -417,12 +465,14 @@ public:
         push_back(std::forward<Args>(args)...);
     }
 
-    virtual void push_front(const value_type& value) {
+    virtual void push_front(const T& value) {
+        if (size_ == capacity_) {
+            throw FullBufferException();
+        }
 
         if (head_ > 0) {
             --head_;
-        }
-        else {
+        } else {
             head_ = capacity_ - 1;
         }
         Alloc_traits::construct(allocator_, start_in_memory_ + head_, value);
@@ -432,37 +482,45 @@ public:
             size_ %= capacity_;
     }
 
-    virtual void push_front(value_type&& value) {
+    virtual void push_front(T&& value) {
+        if (size_ == capacity_) {
+            throw FullBufferException();
+        }
 
         if (head_ > 0) {
             --head_;
-        }
-        else {
+        } else {
             head_ = capacity_ - 1;
         }
         Alloc_traits::construct(allocator_, start_in_memory_ + head_,
-            std::move(value));
+                                std::move(value));
 
         ++size_;
         if (size_ > capacity_)
             size_ %= capacity_;
     }
 
-    virtual void push_back(const value_type& value) {
+    virtual void push_back(const T& value) {
+        if (size_ == capacity_) {
+            throw FullBufferException();
+        }
 
         Alloc_traits::construct(
-            allocator_, start_in_memory_ + ((head_ + size_) % capacity_), value);
+                allocator_, start_in_memory_ + ((head_ + size_) % capacity_), value);
 
         ++size_;
         if (size_ > capacity_)
             size_ %= capacity_;
     }
 
-    virtual void push_back(value_type&& value) {
+    virtual void push_back(T&& value) {
+        if (size_ == capacity_) {
+            throw FullBufferException();
+        }
 
         Alloc_traits::construct(allocator_,
-            start_in_memory_ + ((head_ + size_) % capacity_),
-            std::move(value));
+                                start_in_memory_ + ((head_ + size_) % capacity_),
+                                std::move(value));
 
         ++size_;
         if (size_ > capacity_)
@@ -470,46 +528,46 @@ public:
     }
 
     void pop_front() {
-        if (size_ > 0) {
-            Alloc_traits::destroy(allocator_, start_in_memory_ + head_);
-
-            ++head_;
-            head_ %= capacity_;
-
-            --size_;
+        if (size_ == 0) {
+            throw EmptyBufferException();
         }
-        else throw "Trying to extract an element from an empty buffer";
+        Alloc_traits::destroy(allocator_, start_in_memory_ + head_);
+
+        ++head_;
+        head_ %= capacity_;
+
+        --size_;
     }
 
     void pop_back() {
-        if (size_ > 0) {
-            Alloc_traits::destroy(allocator_,
-                start_in_memory_ + (head_ + size_ - 1) % capacity_);
-
-            --size_;
+        if (size_ == 0) {
+            throw EmptyBufferException();
         }
-        else throw "Trying to extract an element from an empty buffer";
+        Alloc_traits::destroy(allocator_,
+                              start_in_memory_ + (head_ + size_ - 1) % capacity_);
+
+        --size_;
     }
 
-    constexpr reference operator[](size_type n) {
+    constexpr T& operator[](size_t n) {
         return start_in_memory_[head_ + n % capacity_];
     }
 
-    constexpr const_reference operator[](size_type n) const {
+    constexpr const T& operator[](size_t n) const {
         return start_in_memory_[head_ + n % capacity_];
     }
 
-    constexpr reference at(size_type n) { return start_in_memory_[head_ + n % capacity_]; }
+    constexpr T& at(size_t n) { return start_in_memory_[head_ + n % capacity_]; }
 
-    constexpr const_reference at(size_type n) const {
+    constexpr const T& at(size_t n) const {
         return start_in_memory_[head_ + n % capacity_];
     }
 
 protected:
+    Alloc allocator_;
+    size_t capacity_;
     T* start_in_memory_;
     size_t head_;
     size_t size_;
-    size_t capacity_;
-    Alloc allocator_;
 };
 

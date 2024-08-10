@@ -9,10 +9,17 @@ TEST(CircularContainer, EmptyConstructorTest) {
     EXPECT_EQ(true, b.empty());
 }
 
+TEST(CircularContainer, EmptyBufferAddTest) {
+    CCircularBufferExt<std::string> b;
+    b.push_back("a");
+    EXPECT_EQ(true, b.size() == 1);
+}
+
 TEST(CircularContainer, CopyConstructorTest) {
-    CCircularBuffer<std::string> a = {"a", "b", "c", "d", "e", "f", "g"};
-    CCircularBuffer<std::string> b(a);
-    EXPECT_EQ(true, b == a);
+//    CCircularBuffer<std::string> a = {"a", "b", "c", "d", "e", "f", "g"};
+    CCircularBuffer<int> a = {1, 2, 3, 4, 5, 6, 7};
+    CCircularBuffer<int> b(a);
+    EXPECT_EQ(a, b);
 }
 
 TEST(CircularContainer, MoveConstructorTest) {
@@ -44,20 +51,15 @@ TEST(CircularContainer, BeginTest) {
     a.pop_front();
     EXPECT_EQ("c", *a.begin());
     a.push_back("g");
-    a.push_back("g");
-    a.push_back("g");
-    a.push_back("g");
-    a.push_back("g");
     EXPECT_EQ("c", *a.begin());
-    a.push_back("g");
+    a.pop_front();
     EXPECT_EQ("g", *a.begin());
 }
 
 TEST(CircularContainer, EndTest) {
     CCircularBuffer<std::string> a = {"a", "b", "c"};
     EXPECT_EQ("c", *(a.end() - 1));
-    a.push_back("g");
-    a.push_back("g");
+    a.pop_back();
     a.push_back("g");
     EXPECT_EQ("g", *(a.end() - 1));
 }

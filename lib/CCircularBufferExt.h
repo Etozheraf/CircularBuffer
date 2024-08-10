@@ -77,6 +77,12 @@ public:
 
 private:
     constexpr inline void double_up() {
+        if (!B::start_in_memory_) {
+            B::capacity_ = 1;
+            B::start_in_memory_ = Alloc_traits::allocate(B::allocator_, B::capacity_);
+            return;
+        }
+
         value_type* t = Alloc_traits::allocate(B::allocator_, 2 * B::capacity_);
         for (size_t i = 0; i < B::capacity_; i++) {
             Alloc_traits::construct(B::allocator_, t + i, std::move(B::start_in_memory_[i]));
